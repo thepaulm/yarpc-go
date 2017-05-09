@@ -1,5 +1,5 @@
-hash: db249254f5b6500e7c75bec74ca8b93675c6606d080d9e8d5e7dda7a8daba7a4
-updated: 2017-05-02T15:46:33.407635707-07:00
+hash: 0857ee8e9ee348488ac73cd74dbd9369d50acd05ce91edfe1abe09c2371a6c8d
+updated: 2017-05-08T17:09:24.143796807-07:00
 imports:
 - name: github.com/apache/thrift
   version: b2a4d4ae21c789b689dd162deb819665567f481c
@@ -57,10 +57,8 @@ imports:
   version: c12348ce28de40eed0136aa2b644d0ee0650e56c
   subpackages:
   - pbutil
-- name: github.com/mitchellh/mapstructure
-  version: cc8532a8e9a55ea36402aa21efdf403a60d34096
 - name: github.com/opentracing/opentracing-go
-  version: 6edb48674bd9467b8e91fda004f2bd7202d60ce4
+  version: 1949ddbfd147afd4d964a9f00b24eb291e0e7c38
   subpackages:
   - ext
   - log
@@ -104,6 +102,10 @@ imports:
   version: 148dd9dfbd0feb293fc81593a8c10c99877f81bc
 - name: github.com/uber-go/atomic
   version: e682c1008ac17bf26d2e4b5ad6cdd08520ed0b22
+- name: github.com/uber-go/mapdecode
+  version: de2188dac6034e69c22e1e43d3b8d8ff915e7f5b
+  subpackages:
+  - internal/mapstructure
 - name: github.com/uber-go/tally
   version: 4b9d9de43ffcb0b7efe67dab2a92c2d58dbf16ab
   subpackages:
