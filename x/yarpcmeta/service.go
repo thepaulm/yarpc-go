@@ -22,6 +22,7 @@ package yarpcmeta
 
 import (
 	"context"
+	"errors"
 
 	"go.uber.org/yarpc"
 	"go.uber.org/yarpc/api/transport"
@@ -61,10 +62,55 @@ func (m *service) introspect(ctx context.Context, body interface{}) (*introspect
 	return &status, nil
 }
 
-func (m *service) idls(ctx context.Context, body interface{}) (*introspection.IDLTree, error) {
+type idlQuery struct {
+	EntryPoint string   `json:"entryPoint,omitempty"`
+	Selection  []string `json:"selection,omitempty"`
+}
+
+func (m *service) idls(ctx context.Context, rq *idlQuery) (*introspection.IDLTree, error) {
 	procedures := introspection.IntrospectProcedures(m.disp.Router().Procedures())
-	idltree := procedures.IDLTree()
-	idltree.NoIncludes()
+
+	// return the full tree by default.
+	if rq == nil || (rq.EntryPoint == "" && len(rq.Selection) == 0) {
+		idltree := procedures.IDLTree()
+		idltree.NoIncludes()
+		return &idltree, nil
+	}
+
+	if rq.EntryPoint != "" && len(rq.Selection) > 0 {
+		return nil, errors.New(`ask for either an "entryPoint" or a "selection", but not both`)
+	}
+
+	idlmodules := procedures.IDLModules()
+
+	if rq.EntryPoint != "" {
+		for i := range idlmodules {
+			if idlmodules[i].FilePath == rq.EntryPoint {
+				idltree := (idlmodules[i : i+1]).IDLTree()
+				idltree.NoIncludes()
+				return &idltree, nil
+			}
+		}
+	}
+
+	var selection map[string]struct{}
+	if len(rq.Selection) > 0 {
+		selection = make(map[string]struct{})
+		for _, s := range rq.Selection {
+			selection[s] = struct{}{}
+		}
+	}
+
+	next := 0
+	for i := range idlmodules {
+		if _, ok := selection[idlmodules[i].FilePath]; ok {
+			idlmodules[i].Includes = nil
+			idlmodules[next] = idlmodules[i]
+			next++
+		}
+	}
+	idlmodules = idlmodules[0:next]
+	idltree := idlmodules.IDLTree()
 	return &idltree, nil
 }
 

@@ -38,6 +38,28 @@ type Procedure struct {
 // Procedures is a slice of Procedure.
 type Procedures []Procedure
 
+// IDLTree builds an IDL tree from a slice of Procedure.
+func (ps Procedures) IDLTree() IDLTree {
+	tb := newIDLTreeBuilder()
+	for _, p := range ps {
+		if p.IDLEntryPoint != nil {
+			tb.Collect(*p.IDLEntryPoint)
+		}
+	}
+	return tb.Root
+}
+
+// BasicIDLOnly filters out the content and references to included IDLs on
+// every procedures.
+func (ps Procedures) BasicIDLOnly() {
+	for _, p := range ps {
+		if p.IDLEntryPoint != nil {
+			p.IDLEntryPoint.RawContent = ""
+			p.IDLEntryPoint.Includes = nil
+		}
+	}
+}
+
 // IntrospectProcedures is a convenience function that translate a slice of
 // transport.Procedure to a slice of introspection.Procedure. This output is
 // used in debug and yarpcmeta.
@@ -79,9 +101,11 @@ type IDLModule struct {
 	RawContent string      `json:"rawContent,omitempty"`
 }
 
+// IDLModules is a sortable slice of IDLModule.
 type IDLModules []IDLModule
 
-// IDLModules returns a flat map of all IDLModules used across all procedures.
+// IDLModules returns a flap map of all IDLModules used across all procedures.
+// The flat map also contains all IDL includes.
 func (ps Procedures) IDLModules() IDLModules {
 	seen := make(map[string]struct{})
 	var r []IDLModule
@@ -115,61 +139,26 @@ func (ims IDLModules) Swap(i int, j int) {
 	ims[i], ims[j] = ims[j], ims[i]
 }
 
+// IDLTree builds an IDL tree from a slice of Module.
+func (ims IDLModules) IDLTree() IDLTree {
+	tb := newIDLTreeBuilder()
+	for _, m := range ims {
+		tb.Collect(m)
+	}
+	return tb.Root
+}
+
+// IDLTree is a tree of IDLs. A tree can have directories. Dir maps directory
+// names to IDLtrees. And of course, a tree can have any number of IDLModules.
 type IDLTree struct {
 	Dir     map[string]*IDLTree `json:"dir,omitempty"`
 	Modules IDLModules          `json:"modules,omitempty"`
 }
 
-func (ps Procedures) IDLTree() IDLTree {
-	seen := make(map[string]struct{})
-	var r IDLTree
-	var collect func(m IDLModule)
-	collect = func(m IDLModule) {
-		if _, ok := seen[m.FilePath]; !ok {
-			seen[m.FilePath] = struct{}{}
-			n := &r
-			parts := strings.Split(m.FilePath, "/")
-			for i, part := range parts {
-				if i == len(parts)-1 {
-					continue
-				}
-				if n.Dir == nil {
-					newNode := IDLTree{}
-					n.Dir = map[string]*IDLTree{part: &newNode}
-					n = &newNode
-				} else {
-					if subNode, ok := n.Dir[part]; ok {
-						n = subNode
-					} else {
-						newNode := IDLTree{}
-						n.Dir[part] = &newNode
-						n = &newNode
-					}
-				}
-			}
-			n.Modules = append(n.Modules, m)
-		}
-		for _, i := range m.Includes {
-			collect(i)
-		}
-	}
-	for _, p := range ps {
-		if p.IDLEntryPoint != nil {
-			collect(*p.IDLEntryPoint)
-		}
-	}
-	return r
-}
-
-func (ps Procedures) BasicIDLOnly() {
-	for _, p := range ps {
-		if p.IDLEntryPoint != nil {
-			p.IDLEntryPoint.RawContent = ""
-			p.IDLEntryPoint.Includes = nil
-		}
-	}
-}
-
+// Compact replaces any tree with a single directory and no IDLModules by it's
+// single child. The the lone directory name is appended to the parent's
+// directory. I would write an example, but go doc would likely fuck up
+// rendering it anyway.
 func (it *IDLTree) Compact() {
 	for _, l1tree := range it.Dir {
 		l1tree.Compact()
@@ -185,11 +174,53 @@ func (it *IDLTree) Compact() {
 	}
 }
 
+// NoIncludes filter's out all includes from every IDLModules in the tree.
 func (it *IDLTree) NoIncludes() {
 	for i := range it.Dir {
 		it.Dir[i].NoIncludes()
 	}
 	for i := range it.Modules {
 		it.Modules[i].Includes = nil
+	}
+}
+
+type idlTreeBuilder struct {
+	seen map[string]struct{}
+	Root IDLTree
+}
+
+func newIDLTreeBuilder() idlTreeBuilder {
+	return idlTreeBuilder{
+		seen: make(map[string]struct{}),
+	}
+}
+
+func (ib *idlTreeBuilder) Collect(m IDLModule) {
+	if _, ok := ib.seen[m.FilePath]; !ok {
+		ib.seen[m.FilePath] = struct{}{}
+		n := &ib.Root
+		parts := strings.Split(m.FilePath, "/")
+		for i, part := range parts {
+			if i == len(parts)-1 {
+				continue
+			}
+			if n.Dir == nil {
+				newNode := IDLTree{}
+				n.Dir = map[string]*IDLTree{part: &newNode}
+				n = &newNode
+			} else {
+				if subNode, ok := n.Dir[part]; ok {
+					n = subNode
+				} else {
+					newNode := IDLTree{}
+					n.Dir[part] = &newNode
+					n = &newNode
+				}
+			}
+		}
+		n.Modules = append(n.Modules, m)
+	}
+	for _, i := range m.Includes {
+		ib.Collect(i)
 	}
 }
