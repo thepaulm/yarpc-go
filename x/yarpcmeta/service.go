@@ -48,6 +48,7 @@ type procsResponse struct {
 
 func (m *service) procs(ctx context.Context, body interface{}) (*procsResponse, error) {
 	procedures := introspection.IntrospectProcedures(m.disp.Router().Procedures())
+	procedures.BasicIDLOnly()
 	return &procsResponse{
 		Service:    m.disp.Name(),
 		Procedures: procedures,
@@ -56,7 +57,15 @@ func (m *service) procs(ctx context.Context, body interface{}) (*procsResponse, 
 
 func (m *service) introspect(ctx context.Context, body interface{}) (*introspection.DispatcherStatus, error) {
 	status := m.disp.Introspect()
+	status.Procedures.BasicIDLOnly()
 	return &status, nil
+}
+
+func (m *service) idls(ctx context.Context, body interface{}) (*introspection.IDLTree, error) {
+	procedures := introspection.IntrospectProcedures(m.disp.Router().Procedures())
+	idltree := procedures.IDLTree()
+	idltree.NoIncludes()
+	return &idltree, nil
 }
 
 // Procedures returns the procedures to register on a dispatcher.
@@ -70,6 +79,8 @@ func (m *service) Procedures() []transport.Procedure {
 			`procedures() {"service": "...", "procedures": [{"name": "..."}]}`},
 		{"yarpc::introspect", m.introspect,
 			`introspect() {...}`},
+		{"yarpc::idls", m.idls,
+			`idls() {...}`},
 	}
 	var r []transport.Procedure
 	for _, m := range methods {

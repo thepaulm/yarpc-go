@@ -32,7 +32,7 @@ type Procedure struct {
 	Encoding      string     `json:"encoding"`
 	Signature     string     `json:"signature"`
 	RPCType       string     `json:"rpcType"`
-	IDLEntryPoint *IDLModule `json: "idlTree"`
+	IDLEntryPoint *IDLModule `json:"idlEntryPoint,omitempty"`
 }
 
 // Procedures is a slice of Procedure.
@@ -73,10 +73,10 @@ func IntrospectProcedures(routerProcs []transport.Procedure) Procedures {
 // IDLModule is a generic IDL module. For example, a thrift file or a protobuf
 // one.
 type IDLModule struct {
-	FilePath   string
-	SHA1       string
-	Includes   []IDLModule
-	RawContent string
+	FilePath   string      `json:"filePath"`
+	SHA1       string      `json:"sha1"`
+	Includes   []IDLModule `json:"includes,omitempty"`
+	RawContent string      `json:"rawContent,omitempty"`
 }
 
 type IDLModules []IDLModule
@@ -116,8 +116,8 @@ func (ims IDLModules) Swap(i int, j int) {
 }
 
 type IDLTree struct {
-	SubTrees map[string]*IDLTree
-	Modules  IDLModules
+	Dir     map[string]*IDLTree `json:"dir,omitempty"`
+	Modules IDLModules          `json:"modules,omitempty"`
 }
 
 func (ps Procedures) IDLTree() IDLTree {
@@ -133,16 +133,16 @@ func (ps Procedures) IDLTree() IDLTree {
 				if i == len(parts)-1 {
 					continue
 				}
-				if n.SubTrees == nil {
+				if n.Dir == nil {
 					newNode := IDLTree{}
-					n.SubTrees = map[string]*IDLTree{part: &newNode}
+					n.Dir = map[string]*IDLTree{part: &newNode}
 					n = &newNode
 				} else {
-					if subNode, ok := n.SubTrees[part]; ok {
+					if subNode, ok := n.Dir[part]; ok {
 						n = subNode
 					} else {
 						newNode := IDLTree{}
-						n.SubTrees[part] = &newNode
+						n.Dir[part] = &newNode
 						n = &newNode
 					}
 				}
@@ -161,17 +161,35 @@ func (ps Procedures) IDLTree() IDLTree {
 	return r
 }
 
+func (ps Procedures) BasicIDLOnly() {
+	for _, p := range ps {
+		if p.IDLEntryPoint != nil {
+			p.IDLEntryPoint.RawContent = ""
+			p.IDLEntryPoint.Includes = nil
+		}
+	}
+}
+
 func (it *IDLTree) Compact() {
-	for _, l1tree := range it.SubTrees {
+	for _, l1tree := range it.Dir {
 		l1tree.Compact()
 	}
-	for l1dir, l1tree := range it.SubTrees {
-		if len(l1tree.SubTrees) == 1 && len(l1tree.Modules) == 0 {
-			for l2dir, l2tree := range l1tree.SubTrees {
+	for l1dir, l1tree := range it.Dir {
+		if len(l1tree.Dir) == 1 && len(l1tree.Modules) == 0 {
+			for l2dir, l2tree := range l1tree.Dir {
 				compactedDir := l1dir + "/" + l2dir
-				it.SubTrees = map[string]*IDLTree{compactedDir: l2tree}
+				it.Dir = map[string]*IDLTree{compactedDir: l2tree}
 				break
 			}
 		}
+	}
+}
+
+func (it *IDLTree) NoIncludes() {
+	for i := range it.Dir {
+		it.Dir[i].NoIncludes()
+	}
+	for i := range it.Modules {
+		it.Modules[i].Includes = nil
 	}
 }
