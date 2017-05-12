@@ -21,44 +21,8 @@
 package introspection
 
 import (
-	"strings"
-
 	"go.uber.org/yarpc/api/transport"
 )
-
-// Procedure represent a registered procedure on a dispatcher.
-type Procedure struct {
-	Name          string     `json:"name"`
-	Encoding      string     `json:"encoding"`
-	Signature     string     `json:"signature"`
-	RPCType       string     `json:"rpcType"`
-	IDLEntryPoint *IDLModule `json:"idlEntryPoint,omitempty"`
-}
-
-// Procedures is a slice of Procedure.
-type Procedures []Procedure
-
-// IDLTree builds an IDL tree from a slice of Procedure.
-func (ps Procedures) IDLTree() IDLTree {
-	tb := newIDLTreeBuilder()
-	for _, p := range ps {
-		if p.IDLEntryPoint != nil {
-			tb.Collect(*p.IDLEntryPoint)
-		}
-	}
-	return tb.Root
-}
-
-// BasicIDLOnly filters out the content and references to included IDLs on
-// every procedures.
-func (ps Procedures) BasicIDLOnly() {
-	for _, p := range ps {
-		if p.IDLEntryPoint != nil {
-			p.IDLEntryPoint.RawContent = ""
-			p.IDLEntryPoint.Includes = nil
-		}
-	}
-}
 
 // IntrospectProcedures is a convenience function that translate a slice of
 // transport.Procedure to a slice of introspection.Procedure. This output is
@@ -92,135 +56,58 @@ func IntrospectProcedures(routerProcs []transport.Procedure) Procedures {
 	return procedures
 }
 
-// IDLModule is a generic IDL module. For example, a thrift file or a protobuf
-// one.
-type IDLModule struct {
-	FilePath   string      `json:"filePath"`
-	SHA1       string      `json:"sha1"`
-	Includes   []IDLModule `json:"includes,omitempty"`
-	RawContent string      `json:"rawContent,omitempty"`
+// Procedure represent a registered procedure on a dispatcher.
+type Procedure struct {
+	Name          string     `json:"name"`
+	Encoding      string     `json:"encoding"`
+	Signature     string     `json:"signature"`
+	RPCType       string     `json:"rpcType"`
+	IDLEntryPoint *IDLModule `json:"idlEntryPoint,omitempty"`
 }
 
-// IDLModules is a sortable slice of IDLModule.
-type IDLModules []IDLModule
+// Procedures is a slice of Procedure.
+type Procedures []Procedure
 
-// IDLModules returns a flap map of all IDLModules used across all procedures.
-// The flat map also contains all IDL includes.
-func (ps Procedures) IDLModules() IDLModules {
-	seen := make(map[string]struct{})
-	var r []IDLModule
-	var collect func(m IDLModule)
-	collect = func(m IDLModule) {
-		if _, ok := seen[m.FilePath]; !ok {
-			seen[m.FilePath] = struct{}{}
-			r = append(r, m)
-		}
-		for _, i := range m.Includes {
-			collect(i)
-		}
-	}
+// Flatmap iterates recursively over every idl modules. The cb function is
+// called onces for every unique idl module (based on FilePath). Iteration is
+// aborted if cb returns true.
+func (ps Procedures) Flatmap(cb func(*IDLModule) bool) {
+	ft := newIDLFlattener(cb)
 	for _, p := range ps {
 		if p.IDLEntryPoint != nil {
-			collect(*p.IDLEntryPoint)
+			ft.Collect(p.IDLEntryPoint)
 		}
 	}
+}
+
+// IDLModules returns a slice with all idl modules.
+func (ps Procedures) IDLModules() IDLModules {
+	var r []IDLModule
+	ps.Flatmap(func(m *IDLModule) bool {
+		r = append(r, *m)
+		return false
+	})
 	return r
 }
 
-func (ims IDLModules) Len() int {
-	return len(ims)
-}
-
-func (ims IDLModules) Less(i int, j int) bool {
-	return ims[i].FilePath < ims[j].FilePath
-}
-
-func (ims IDLModules) Swap(i int, j int) {
-	ims[i], ims[j] = ims[j], ims[i]
-}
-
-// IDLTree builds an IDL tree from a slice of Module.
-func (ims IDLModules) IDLTree() IDLTree {
+// IDLTree builds an IDL tree from all idl modules.
+func (ps Procedures) IDLTree() IDLTree {
 	tb := newIDLTreeBuilder()
-	for _, m := range ims {
-		tb.Collect(m)
+	for _, p := range ps {
+		if p.IDLEntryPoint != nil {
+			tb.Collect(p.IDLEntryPoint)
+		}
 	}
 	return tb.Root
 }
 
-// IDLTree is a tree of IDLs. A tree can have directories. Dir maps directory
-// names to IDLtrees. And of course, a tree can have any number of IDLModules.
-type IDLTree struct {
-	Dir     map[string]*IDLTree `json:"dir,omitempty"`
-	Modules IDLModules          `json:"modules,omitempty"`
-}
-
-// Compact replaces any tree with a single directory and no IDLModules by it's
-// single child. The the lone directory name is appended to the parent's
-// directory. I would write an example, but go doc would likely fuck up
-// rendering it anyway.
-func (it *IDLTree) Compact() {
-	for _, l1tree := range it.Dir {
-		l1tree.Compact()
-	}
-	for l1dir, l1tree := range it.Dir {
-		if len(l1tree.Dir) == 1 && len(l1tree.Modules) == 0 {
-			for l2dir, l2tree := range l1tree.Dir {
-				compactedDir := l1dir + "/" + l2dir
-				it.Dir = map[string]*IDLTree{compactedDir: l2tree}
-				break
-			}
+// BasicIDLOnly filters out the content and references to included IDLs on
+// every procedures.
+func (ps Procedures) BasicIDLOnly() {
+	for _, p := range ps {
+		if p.IDLEntryPoint != nil {
+			p.IDLEntryPoint.RawContent = ""
+			p.IDLEntryPoint.Includes = nil
 		}
-	}
-}
-
-// NoIncludes filter's out all includes from every IDLModules in the tree.
-func (it *IDLTree) NoIncludes() {
-	for i := range it.Dir {
-		it.Dir[i].NoIncludes()
-	}
-	for i := range it.Modules {
-		it.Modules[i].Includes = nil
-	}
-}
-
-type idlTreeBuilder struct {
-	seen map[string]struct{}
-	Root IDLTree
-}
-
-func newIDLTreeBuilder() idlTreeBuilder {
-	return idlTreeBuilder{
-		seen: make(map[string]struct{}),
-	}
-}
-
-func (ib *idlTreeBuilder) Collect(m IDLModule) {
-	if _, ok := ib.seen[m.FilePath]; !ok {
-		ib.seen[m.FilePath] = struct{}{}
-		n := &ib.Root
-		parts := strings.Split(m.FilePath, "/")
-		for i, part := range parts {
-			if i == len(parts)-1 {
-				continue
-			}
-			if n.Dir == nil {
-				newNode := IDLTree{}
-				n.Dir = map[string]*IDLTree{part: &newNode}
-				n = &newNode
-			} else {
-				if subNode, ok := n.Dir[part]; ok {
-					n = subNode
-				} else {
-					newNode := IDLTree{}
-					n.Dir[part] = &newNode
-					n = &newNode
-				}
-			}
-		}
-		n.Modules = append(n.Modules, m)
-	}
-	for _, i := range m.Includes {
-		ib.Collect(i)
 	}
 }

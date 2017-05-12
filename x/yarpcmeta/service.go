@@ -62,37 +62,65 @@ func (m *service) introspect(ctx context.Context, body interface{}) (*introspect
 	return &status, nil
 }
 
-type idlQuery struct {
+type idlsQuery struct {
 	EntryPoint string   `json:"entryPoint,omitempty"`
 	Selection  []string `json:"selection,omitempty"`
 }
 
-func (m *service) idls(ctx context.Context, rq *idlQuery) (*introspection.IDLTree, error) {
+type idlFile struct {
+	FilePath   string   `json:"filePath"`
+	SHA1       string   `json:"sha1"`
+	Includes   []string `json:"includes,omitempty"`
+	RawContent string   `json:"rawContent,omitempty"`
+}
+
+type idlsResponse struct {
+	IDLs []idlFile `json:"idls"`
+}
+
+func (r *idlsResponse) Append(m *introspection.IDLModule) bool {
+	includes := make([]string, len(m.Includes))
+	for i := range m.Includes {
+		includes[i] = m.Includes[i].FilePath
+	}
+	r.IDLs = append(r.IDLs, idlFile{
+		FilePath:   m.FilePath,
+		SHA1:       m.SHA1,
+		Includes:   includes,
+		RawContent: m.RawContent,
+	})
+	return false
+}
+
+func (m *service) idls(ctx context.Context, rq *idlsQuery) (*idlsResponse, error) {
 	procedures := introspection.IntrospectProcedures(m.disp.Router().Procedures())
 
-	// return the full tree by default.
+	// return the flattened tree by default.
 	if rq == nil || (rq.EntryPoint == "" && len(rq.Selection) == 0) {
-		idltree := procedures.IDLTree()
-		idltree.NoIncludes()
-		return &idltree, nil
+		var r idlsResponse
+		procedures.Flatmap(r.Append)
+		return &r, nil
 	}
 
 	if rq.EntryPoint != "" && len(rq.Selection) > 0 {
 		return nil, errors.New(`ask for either an "entryPoint" or a "selection", but not both`)
 	}
 
-	idlmodules := procedures.IDLModules()
-
+	// find the idl requested among all of them and return it with all its
+	// recursive includes.
 	if rq.EntryPoint != "" {
-		for i := range idlmodules {
-			if idlmodules[i].FilePath == rq.EntryPoint {
-				idltree := (idlmodules[i : i+1]).IDLTree()
-				idltree.NoIncludes()
-				return &idltree, nil
+		var r idlsResponse
+		procedures.Flatmap(func(m *introspection.IDLModule) bool {
+			if m.FilePath == rq.EntryPoint {
+				m.Flatmap(r.Append)
+				return true
 			}
-		}
+			return false
+		})
+		return &r, nil
 	}
 
+	// find and return every idl matching the selection. No includes are returned.
 	var selection map[string]struct{}
 	if len(rq.Selection) > 0 {
 		selection = make(map[string]struct{})
@@ -101,17 +129,15 @@ func (m *service) idls(ctx context.Context, rq *idlQuery) (*introspection.IDLTre
 		}
 	}
 
-	next := 0
-	for i := range idlmodules {
-		if _, ok := selection[idlmodules[i].FilePath]; ok {
-			idlmodules[i].Includes = nil
-			idlmodules[next] = idlmodules[i]
-			next++
+	var r idlsResponse
+	procedures.Flatmap(func(m *introspection.IDLModule) bool {
+		if _, ok := selection[m.FilePath]; ok {
+			r.Append(m)
 		}
-	}
-	idlmodules = idlmodules[0:next]
-	idltree := idlmodules.IDLTree()
-	return &idltree, nil
+		return false
+	})
+
+	return &r, nil
 }
 
 // Procedures returns the procedures to register on a dispatcher.

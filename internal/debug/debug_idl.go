@@ -112,6 +112,8 @@ var idlPage = page{
 			return data
 		}
 
+		w.Header().Set("Content-Type", "application/json")
+
 		for idx, d := range data.Dispatchers {
 			if len(data.Dispatchers) > 1 {
 				fmt.Fprintf(w, "Dispatcher %q #%d:\n", d.Name, idx)
@@ -164,7 +166,7 @@ var idlPage = page{
 			</td>
 		</tr>
 	{{end}}
-	{{range $dir, $subTree := .SubTrees}}
+	{{range $dir, $subTree := .Dir}}
 		<tr>
 			<td style="padding-left: {{ $indent }}em">
 				<div class="filename">
