@@ -36,21 +36,23 @@ type dispatcherIdl struct {
 	IDLTree    introspection.IDLTree
 }
 
-type IDLTreeHelper struct {
+type idlTreeHelper struct {
 	DispatcherName string
 	Indent         int
 	Tree           *introspection.IDLTree
 }
 
-func wrapIDLTree(dname string, i int, t *introspection.IDLTree) IDLTreeHelper {
+func wrapIDLTree(dname string, i int, t *introspection.IDLTree) idlTreeHelper {
 	sort.Sort(t.Modules)
-	return IDLTreeHelper{dname, i + 1, t}
+	return idlTreeHelper{dname, i + 1, t}
 }
 
+const idlPagePath = "/debug/yarpc/idl/"
+
 var idlPage = page{
-	path: "/debug/yarpc/idl/",
-	handler: func(w http.ResponseWriter, req *http.Request, is IntrospectionProvider) interface{} {
-		path := strings.TrimPrefix(req.URL.Path, "/debug/yarpc/idl/")
+	path: idlPagePath,
+	handler: func(w http.ResponseWriter, req *http.Request, insp IntrospectionProvider) interface{} {
+		path := strings.TrimPrefix(req.URL.Path, idlPagePath)
 		parts := strings.SplitN(path, "/", 2)
 		var selectDispatcher string
 		var selectIDL string
@@ -66,7 +68,7 @@ var idlPage = page{
 
 		var dispatchers []introspection.DispatcherStatus
 		if selectDispatcher != "" {
-			dispatchers = is.DispatchersByName(selectDispatcher)
+			dispatchers = insp.DispatchersByName(selectDispatcher)
 
 			if len(dispatchers) == 0 {
 				w.WriteHeader(404)
@@ -74,14 +76,14 @@ var idlPage = page{
 				return nil
 			}
 		} else {
-			dispatchers = is.Dispatchers()
+			dispatchers = insp.Dispatchers()
 		}
 
 		data := struct {
 			Dispatchers     []dispatcherIdl
 			PackageVersions []introspection.PackageVersion
 		}{
-			PackageVersions: is.PackageVersions(),
+			PackageVersions: insp.PackageVersions(),
 		}
 
 		for _, d := range dispatchers {

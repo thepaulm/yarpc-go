@@ -29,11 +29,13 @@ import (
 	"go.uber.org/yarpc/internal/introspection"
 )
 
-type HTTPMux interface {
+type httpMux interface {
 	Handle(pattern string, handler http.Handler)
 	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
 }
 
+// IntrospectionProvider expects a set of methods to retrieve YARPC specific
+// introspection informations.
 type IntrospectionProvider interface {
 	Dispatchers() []introspection.DispatcherStatus
 	DispatchersByName(name string) []introspection.DispatcherStatus
@@ -43,17 +45,19 @@ type IntrospectionProvider interface {
 type page struct {
 	path    string
 	handler func(w http.ResponseWriter, req *http.Request,
-		is IntrospectionProvider) interface{}
+		insp IntrospectionProvider) interface{}
 	html string
 	tmpl *template.Template
 }
 
-type DebugPages struct {
-	is    IntrospectionProvider
+// Pages holds a bag of yarpc debug pages. Binding a set of pages to an
+// introspection provider.
+type Pages struct {
+	insp  IntrospectionProvider
 	pages map[string]*page
 }
 
-func (dp *DebugPages) registerPage(page *page) {
+func (dp *Pages) registerPage(page *page) {
 	funcmap := map[string]interface{}{
 		"pathBase":    path.Base,
 		"wrapIDLtree": wrapIDLTree,
@@ -67,8 +71,8 @@ func (dp *DebugPages) registerPage(page *page) {
 	dp.pages[page.path] = page
 }
 
-func (dp *DebugPages) executePage(w http.ResponseWriter, req *http.Request, page *page) {
-	data := page.handler(w, req, dp.is)
+func (dp *Pages) executePage(w http.ResponseWriter, req *http.Request, page *page) {
+	data := page.handler(w, req, dp.insp)
 	if data == nil {
 		return
 	}
@@ -78,15 +82,17 @@ func (dp *DebugPages) executePage(w http.ResponseWriter, req *http.Request, page
 	}
 }
 
-func (dp *DebugPages) newPageHandler(page *page) http.HandlerFunc {
+func (dp *Pages) newPageHandler(page *page) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		dp.executePage(w, req, page)
 	}
 }
 
-func NewDebugPages(is IntrospectionProvider) *DebugPages {
-	r := DebugPages{
-		is:    is,
+// NewPages instantiate a new set of yarpc debug pages handlers, bound to the
+// given introspection provider.
+func NewPages(insp IntrospectionProvider) *Pages {
+	r := Pages{
+		insp:  insp,
 		pages: make(map[string]*page),
 	}
 	r.registerPage(&rootPage)
@@ -94,7 +100,8 @@ func NewDebugPages(is IntrospectionProvider) *DebugPages {
 	return &r
 }
 
-func (dp *DebugPages) RegisterOn(mux HTTPMux) {
+// RegisterOn the given http mux all the debug pages.
+func (dp *Pages) RegisterOn(mux httpMux) {
 	for _, page := range dp.pages {
 		mux.HandleFunc(page.path, dp.newPageHandler(page))
 	}

@@ -28,13 +28,13 @@ import (
 
 var rootPage = page{
 	path: "/debug/yarpc",
-	handler: func(w http.ResponseWriter, req *http.Request, is IntrospectionProvider) interface{} {
+	handler: func(w http.ResponseWriter, req *http.Request, insp IntrospectionProvider) interface{} {
 		return struct {
 			Dispatchers     []introspection.DispatcherStatus
 			PackageVersions []introspection.PackageVersion
 		}{
-			PackageVersions: is.PackageVersions(),
-			Dispatchers:     is.Dispatchers(),
+			PackageVersions: insp.PackageVersions(),
+			Dispatchers:     insp.Dispatchers(),
 		}
 	},
 	html: `

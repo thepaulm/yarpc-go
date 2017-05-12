@@ -98,6 +98,6 @@ func introspectDispatchers() []introspection.DispatcherStatus {
 }
 
 func init() {
-	debugPages := debug.NewDebugPages(introspectionProvider{})
+	debugPages := debug.NewPages(introspectionProvider{})
 	debugPages.RegisterOn(http.DefaultServeMux)
 }
