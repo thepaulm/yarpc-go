@@ -90,6 +90,18 @@ func (ps Procedures) IDLModules() IDLModules {
 	return r
 }
 
+// IDLModuleByFilePath returns the idl modules matching the given filepath.
+func (ps Procedures) IDLModuleByFilePath(filePath string) (r *IDLModule, ok bool) {
+	ps.Flatmap(func(m *IDLModule) bool {
+		if m.FilePath == filePath {
+			r = m
+			return true
+		}
+		return false
+	})
+	return r, r != nil
+}
+
 // IDLTree builds an IDL tree from all idl modules.
 func (ps Procedures) IDLTree() IDLTree {
 	tb := newIDLTreeBuilder()

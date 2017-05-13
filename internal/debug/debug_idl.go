@@ -29,11 +29,10 @@ import (
 	"go.uber.org/yarpc/internal/introspection"
 )
 
-type dispatcherIdl struct {
-	Name       string
-	ID         string
-	IDLModules []introspection.IDLModule
-	IDLTree    introspection.IDLTree
+type dispatcherWithIdlTree struct {
+	Name    string
+	ID      string
+	IDLTree introspection.IDLTree
 }
 
 type idlTreeHelper struct {
@@ -47,12 +46,42 @@ func wrapIDLTree(dname string, i int, t *introspection.IDLTree) idlTreeHelper {
 	return idlTreeHelper{dname, i + 1, t}
 }
 
+type dispatcherWithIDLModule struct {
+	Dispatcher introspection.DispatcherStatus
+	IDLModule  introspection.IDLModule
+}
+
 const idlPagePath = "/debug/yarpc/idl/"
 
 var idlPage = page{
 	path: idlPagePath,
 	handler: func(w http.ResponseWriter, req *http.Request, insp IntrospectionProvider) interface{} {
 		path := strings.TrimPrefix(req.URL.Path, idlPagePath)
+
+		// Without an IDL file paht we return an html page with a full tree.
+		if path == "" {
+			data := struct {
+				Dispatchers     []dispatcherWithIdlTree
+				PackageVersions []introspection.PackageVersion
+			}{
+				PackageVersions: insp.PackageVersions(),
+			}
+
+			for _, d := range insp.Dispatchers() {
+				idltree := d.Procedures.IDLTree()
+				idltree.Compact()
+				data.Dispatchers = append(data.Dispatchers, dispatcherWithIdlTree{
+					Name:    d.Name,
+					ID:      d.ID,
+					IDLTree: idltree,
+				})
+			}
+
+			return data
+		}
+
+		// Here we are hunting for the idl file path to return. Dispatchers can have
+		// duplicated names. Because
 		parts := strings.SplitN(path, "/", 2)
 		var selectDispatcher string
 		var selectIDL string
@@ -66,68 +95,39 @@ var idlPage = page{
 			selectIDL = parts[1]
 		}
 
-		var dispatchers []introspection.DispatcherStatus
-		if selectDispatcher != "" {
-			dispatchers = insp.DispatchersByName(selectDispatcher)
+		dispatchers := insp.DispatchersByName(selectDispatcher)
 
-			if len(dispatchers) == 0 {
-				w.WriteHeader(404)
-				fmt.Fprintf(w, "dispatcher %q not found", selectDispatcher)
-				return nil
-			}
-		} else {
-			dispatchers = insp.Dispatchers()
+		if len(dispatchers) == 0 {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, "dispatcher(s) %q not found", selectDispatcher)
+			return nil
 		}
 
-		data := struct {
-			Dispatchers     []dispatcherIdl
-			PackageVersions []introspection.PackageVersion
-		}{
-			PackageVersions: insp.PackageVersions(),
-		}
+		var idls []dispatcherWithIDLModule
 
 		for _, d := range dispatchers {
-			idls := d.Procedures.IDLModules()
-			if selectIDL != "" {
-				var selected []introspection.IDLModule
-				for i, idl := range idls {
-					if idl.FilePath == selectIDL {
-						selected = idls[i : i+1]
-						break
-					}
-				}
-				idls = selected
-			} else {
-				sort.Sort(idls)
+			if m, ok := d.Procedures.IDLModuleByFilePath(selectIDL); ok {
+				idls = append(idls, dispatcherWithIDLModule{
+					Dispatcher: d,
+					IDLModule:  *m,
+				})
 			}
-			idltree := d.Procedures.IDLTree()
-			idltree.Compact()
-			data.Dispatchers = append(data.Dispatchers, dispatcherIdl{
-				Name:       d.Name,
-				ID:         d.ID,
-				IDLModules: idls,
-				IDLTree:    idltree,
-			})
 		}
 
-		if selectDispatcher == "" {
-			return data
+		if len(idls) == 0 {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, "IDL %q not found on Dispatcher(s) %q\n",
+				selectIDL, selectDispatcher)
+			return nil
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-
-		for idx, d := range data.Dispatchers {
-			if len(data.Dispatchers) > 1 {
-				fmt.Fprintf(w, "Dispatcher %q #%d:\n", d.Name, idx)
+		w.Header().Set("Content-Type", "text/plain")
+		for _, d := range idls {
+			if len(idls) > 1 {
+				fmt.Fprintf(w, "Dispatcher %q (%q):\n",
+					d.Dispatcher.Name, d.Dispatcher.ID)
 			}
-			if len(d.IDLModules) != 1 {
-				if len(data.Dispatchers) == 1 {
-					w.WriteHeader(404)
-				}
-				fmt.Fprintf(w, "IDL not found: %q\n", selectIDL)
-				continue
-			}
-			fmt.Fprintf(w, d.IDLModules[0].RawContent)
+			fmt.Fprintf(w, d.IDLModule.RawContent)
 		}
 		return nil
 	},
