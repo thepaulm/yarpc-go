@@ -134,9 +134,9 @@ func do() error {
 		return err
 	}
 
-	i := dispatcher.Introspect()
-	PrettyPrint(i)
-	PrettyPrint(i.Procedures.IDLTree())
+	//i := dispatcher.Introspect()
+	//PrettyPrint(i)
+	//PrettyPrint(i.Procedures.IDLTree())
 
 	select {} // block forever
 	return nil
