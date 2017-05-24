@@ -37,7 +37,7 @@ import:
 - package: github.com/uber/jaeger-client-go
   version: '>=1, <3'
 - package: github.com/uber/tchannel-go
-  version: ^1.4
+  version: peer-status-change-on-close
 - package: github.com/uber-go/tally
   version: ^3
 - package: go.uber.org/atomic
