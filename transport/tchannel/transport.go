@@ -23,6 +23,7 @@ package tchannel
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"go.uber.org/yarpc/api/peer"
 	"go.uber.org/yarpc/api/transport"
@@ -49,7 +50,11 @@ type Transport struct {
 	name   string
 	addr   string
 
-	peers map[string]*hostport.Peer
+	connectionTimeout            time.Duration
+	initialConnectionRetryDelay  time.Duration
+	connectionRetryBackoffFactor int
+
+	peers map[string]*tchannelPeer
 }
 
 // NewTransport is a YARPC transport that facilitates sending and receiving
@@ -60,8 +65,7 @@ type Transport struct {
 // Either the local service name (with the ServiceName option) or a user-owned
 // TChannel (with the WithChannel option) MUST be specified.
 func NewTransport(opts ...TransportOption) (*Transport, error) {
-	var config transportConfig
-	config.tracer = opentracing.GlobalTracer()
+	config := newTransportConfig()
 	for _, opt := range opts {
 		opt(&config)
 	}
@@ -75,11 +79,14 @@ func NewTransport(opts ...TransportOption) (*Transport, error) {
 
 func (config transportConfig) newTransport() *Transport {
 	return &Transport{
-		once:   intsync.Once(),
-		name:   config.name,
-		addr:   config.addr,
+		once:                         intsync.Once(),
+		name:                         config.name,
+		addr:                         config.addr,
+		connectionTimeout:            config.connectionTimeout,
+		initialConnectionRetryDelay:  defaultInitialConnectionRetryDelay,
+		connectionRetryBackoffFactor: defaultConnectionRetryBackoffFactor,
 		tracer: config.tracer,
-		peers:  make(map[string]*hostport.Peer),
+		peers:  make(map[string]*tchannelPeer),
 	}
 }
 
@@ -108,15 +115,15 @@ func (t *Transport) RetainPeer(pid peer.Identifier, sub peer.Subscriber) (peer.P
 }
 
 // **NOTE** should only be called while the lock write mutex is acquired
-func (t *Transport) getOrCreatePeer(pid hostport.PeerIdentifier) *hostport.Peer {
+func (t *Transport) getOrCreatePeer(pid hostport.PeerIdentifier) *tchannelPeer {
 	if p, ok := t.peers[pid.Identifier()]; ok {
 		return p
 	}
 
-	p := hostport.NewPeer(pid, t)
-	p.SetStatus(peer.Available)
-
+	p := newPeer(pid, t)
 	t.peers[p.Identifier()] = p
+	// Start a peer connection loop
+	go p.maintainConnection()
 
 	return p
 }
@@ -140,6 +147,8 @@ func (t *Transport) ReleasePeer(pid peer.Identifier, sub peer.Subscriber) error 
 	}
 
 	if p.NumSubscribers() == 0 {
+		// Release the peer so that the connection retention loop stops.
+		close(p.released)
 		delete(t.peers, pid.Identifier())
 	}
 
@@ -160,6 +169,7 @@ func (t *Transport) start() error {
 			router: t.router,
 			tracer: t.tracer,
 		},
+		OnPeerStatusChanged: t.onPeerStatusChanged,
 	}
 	ch, err := tchannel.NewChannel(t.name, &chopts)
 	if err != nil {
@@ -207,4 +217,17 @@ func (t *Transport) stop() error {
 // IsRunning returns whether the TChannel transport is running.
 func (t *Transport) IsRunning() bool {
 	return t.once.IsRunning()
+}
+
+// onPeerStatusChanged receives notifications from TChannel Channel when any
+// peer's status changes.
+func (t *Transport) onPeerStatusChanged(tp *tchannel.Peer) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	p, ok := t.peers[tp.HostPort()]
+	if !ok {
+		return
+	}
+	p.onStatusChanged()
 }

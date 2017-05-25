@@ -22,21 +22,26 @@ package tchannel
 
 import (
 	"fmt"
+	"time"
 
 	"go.uber.org/yarpc/api/transport"
 	"go.uber.org/yarpc/peer/hostport"
 	"go.uber.org/yarpc/x/config"
-
-	opentracing "github.com/opentracing/opentracing-go"
 )
-
-const transportName = "tchannel"
 
 // TransportConfig configures a shared TChannel transport. This is shared
 // between all TChannel outbounds and inbounds of a Dispatcher.
 //
-// TransportConfig does not have any parameters at this time.
-type TransportConfig struct{}
+//  transports:
+//    tchannel:
+//      connection-timeout: 500ms
+//      initial-connection-retry-delay: 1s
+//      connection-retry-backoff-factor: 2
+type TransportConfig struct {
+	ConnectionTimeout            time.Duration `config:"connection-timeout,interpolate"`
+	InitialConnectionRetryDelay  time.Duration `config:"initial-connection-retry-delay,interpolate"`
+	ConnectionRetryBackoffFactor int           `config:"connection-retry-backoff-factor,interpolate"`
+}
 
 // InboundConfig configures a TChannel inbound.
 //
@@ -93,12 +98,14 @@ func (ts *transportSpec) Spec() config.TransportSpec {
 }
 
 func (ts *transportSpec) buildTransport(tc *TransportConfig, k *config.Kit) (transport.Transport, error) {
-	var cfg transportConfig
-	// Default configuration.
-	cfg.tracer = opentracing.GlobalTracer()
+	cfg := newTransportConfig()
 
 	for _, o := range ts.transportOptions {
 		o(&cfg)
+	}
+
+	if tc.ConnectionTimeout != 0 {
+		cfg.connectionTimeout = tc.ConnectionTimeout
 	}
 
 	if cfg.name != "" {

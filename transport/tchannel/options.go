@@ -20,7 +20,11 @@
 
 package tchannel
 
-import "github.com/opentracing/opentracing-go"
+import (
+	"time"
+
+	"github.com/opentracing/opentracing-go"
+)
 
 // Option allows customizing the YARPC TChannel transport.
 // TransportSpec() accepts any TransportOption, and may in the future also
@@ -40,10 +44,23 @@ var _ Option = (TransportOption)(nil)
 // peer lists.
 // TODO update above when NewTransport is real.
 type transportConfig struct {
-	ch     Channel
-	tracer opentracing.Tracer
-	addr   string
-	name   string
+	ch                           Channel
+	tracer                       opentracing.Tracer
+	addr                         string
+	name                         string
+	connectionTimeout            time.Duration
+	initialConnectionRetryDelay  time.Duration
+	connectionRetryBackoffFactor int
+}
+
+// newTransportConfig constructs the default transport options struct
+func newTransportConfig() transportConfig {
+	return transportConfig{
+		tracer:                       opentracing.GlobalTracer(),
+		connectionTimeout:            defaultConnectionTimeout,
+		initialConnectionRetryDelay:  defaultInitialConnectionRetryDelay,
+		connectionRetryBackoffFactor: defaultConnectionRetryBackoffFactor,
+	}
 }
 
 // TransportOption customizes the behavior of a TChannel Transport.
@@ -105,5 +122,32 @@ func ListenAddr(addr string) TransportOption {
 func ServiceName(name string) TransportOption {
 	return func(t *transportConfig) {
 		t.name = name
+	}
+}
+
+// ConnectionTimeout specifies the time that TChannel will wait for a
+// connection attempt to any retained peer.  The default is half of a second.
+func ConnectionTimeout(d time.Duration) TransportOption {
+	return func(t *transportConfig) {
+		t.connectionTimeout = d
+	}
+}
+
+// InitialConnectionRetryDelay specifies the time that TChannel will wait
+// before making its first attempt to reconnect to a freshly disconnected peer.
+// This delay will increase by the connection retry backoff factor each time
+// a reconnect attempt fails, and be restored to the initial value whenever
+// it succeeds.  The default is one second.
+func InitialConnectionRetryDelay(d time.Duration) TransportOption {
+	return func(t *transportConfig) {
+		t.initialConnectionRetryDelay = d
+	}
+}
+
+// ConnectionRetryBackoffFactor specifies the multiplier that increases the
+// delay between failed connection attempts.  The default is two times.
+func ConnectionRetryBackoffFactor(f int) TransportOption {
+	return func(t *transportConfig) {
+		t.connectionRetryBackoffFactor = f
 	}
 }
